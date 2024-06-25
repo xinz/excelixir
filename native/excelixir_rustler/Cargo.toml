@@ -1,0 +1,14 @@
+[package]
+name = "excelixir_rustler"
+version = "0.1.0"
+authors = []
+edition = "2021"
+
+[lib]
+name = "excelixir_rustler"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.33.0"
+umya-spreadsheet = "1.2.7"
