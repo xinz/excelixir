@@ -31,37 +31,35 @@ mod atoms {
     rustler::atoms! {
         ok,
         error,
-        io_error,
-        xml_error,
-        zip_error,
-        uft8_error,
         unknown // Other error
     }
 }
 
-fn xlsx_error_to_term(err: XlsxError) -> Atom {
+fn xlsx_error_to_str(err: XlsxError) -> String {
     match err {
-        XlsxError::Io(_) => atoms::io_error(),
-        XlsxError::Xml(_) => atoms::xml_error(),
-        XlsxError::Zip(_) => atoms::zip_error(),
-        XlsxError::Uft8(_) => atoms::uft8_error(),
+        XlsxError::Io(_) => "io_error".to_string(),
+        XlsxError::Xml(_) => "xml_error".to_string(),
+        XlsxError::Zip(_) => "zip_error".to_string(),
+        XlsxError::Uft8(_) => "uft8_error".to_string(),
     }
 }
-//
+
+
 #[rustler::nif]
 pub fn read(path: String) -> NifResult<ResourceArc<SpreadsheetResource>> {
     let p = std::path::Path::new(&path);
     match reader::xlsx::read(p) {
         Ok(spreadsheet) => Ok(ResourceArc::new(SpreadsheetResource(Arc::new(Mutex::new(spreadsheet))))),
-        Err(error) => return Err(RustlerError::Term(Box::new(xlsx_error_to_term(error)))),
+        Err(error) => return Err(RustlerError::Term(Box::new(xlsx_error_to_str(error)))),
     }
 }
+
 
 #[rustler::nif]
 pub fn get_sheet(spreadsheet: ResourceArc<SpreadsheetResource>, index: usize) -> NifResult<Option<ResourceArc<WorksheetResource>>> {
     let spreadsheet_arc = spreadsheet.0.clone();
     let worksheet = {
-        let spreadsheet = spreadsheet_arc.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+        let spreadsheet = spreadsheet_arc.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
         spreadsheet.get_sheet(&index).map(|sheet| sheet.clone())
     };
     if let Some(sheet) = worksheet  {
@@ -78,7 +76,7 @@ pub fn get_sheet(spreadsheet: ResourceArc<SpreadsheetResource>, index: usize) ->
 pub fn get_sheet_by_name(spreadsheet: ResourceArc<SpreadsheetResource>, name: String) -> NifResult<Option<ResourceArc<WorksheetResource>>> {
     let spreadsheet_arc = spreadsheet.0.clone();
     let exists = {
-        let spreadsheet = spreadsheet_arc.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+        let spreadsheet = spreadsheet_arc.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
         spreadsheet.get_sheet_by_name(&name).is_some()
     };
     if exists {
@@ -94,7 +92,7 @@ pub fn get_sheet_by_name(spreadsheet: ResourceArc<SpreadsheetResource>, name: St
 #[rustler::nif]
 fn get_cell(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifResult<Option<ResourceArc<CellResource>>> {
     let exists = {
-        let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+        let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
         spreadsheet.get_sheet_by_name(&worksheet.sheet_name).unwrap().get_cell(cell_ref.as_str()).is_some()
     };
     if exists {
@@ -108,9 +106,9 @@ fn get_cell(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifR
     }
 }
 
-#[rustler::nif]
-fn get_cell_value(cell: ResourceArc<CellResource>) -> NifResult<Option<String>> {
-    let spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+#[rustler::nif(name = "get_cell_value")]
+fn get_cell_value_by_cell(cell: ResourceArc<CellResource>) -> NifResult<Option<String>> {
+    let spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
     let sheet = spreadsheet.get_sheet_by_name(&cell.sheet_name).unwrap();
     let cell = sheet.get_cell(cell.cell_ref.as_str()).unwrap();
     let value = cell.get_value().to_string();
@@ -121,9 +119,24 @@ fn get_cell_value(cell: ResourceArc<CellResource>) -> NifResult<Option<String>> 
     }
 }
 
+#[rustler::nif(name = "get_cell_value")]
+fn get_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifResult<Option<String>> {
+    let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
+    let sheet = spreadsheet.get_sheet_by_name(&worksheet.sheet_name).unwrap();
+    let cell = sheet.get_cell(cell_ref.as_str())
+        .ok_or_else(|| rustler::Error::Term(Box::new("cell_not_found")))?;
+
+    let value = cell.get_value().to_string();
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
+    }
+}
+
 #[rustler::nif(name = "set_cell_value")]
 fn set_cell_value_by_cell(cell: ResourceArc<CellResource>, value: String) -> NifResult<Atom> {
-    let mut spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+    let mut spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
     let sheet = spreadsheet.get_sheet_by_name_mut(&cell.sheet_name).unwrap();
     sheet.get_cell_mut(cell.cell_ref.as_str()).set_value(value);
     Ok(atoms::ok())
@@ -132,7 +145,7 @@ fn set_cell_value_by_cell(cell: ResourceArc<CellResource>, value: String) -> Nif
 #[rustler::nif(name = "set_cell_value")]
 fn set_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: String, value: String) -> NifResult<Atom> {
     let spreadsheet = worksheet.spreadsheet.clone();
-    let mut spreadsheet_lock = spreadsheet.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+    let mut spreadsheet_lock = spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
     let sheet = spreadsheet_lock.get_sheet_by_name_mut(&worksheet.sheet_name).unwrap();
     
     // Always write value to the cell even if that cell is not existed.
@@ -142,9 +155,9 @@ fn set_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: 
 
 #[rustler::nif]
 pub fn save(spreadsheet: ResourceArc<SpreadsheetResource>, path: String) -> NifResult<Atom> {
-    let spreadsheet = spreadsheet.0.lock().map_err(|_| rustler::Error::Atom("lock_failed"))?;
+    let spreadsheet = spreadsheet.0.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
     let p = std::path::Path::new(&path);
-    writer::xlsx::write(&spreadsheet, p).map_err(|_| rustler::Error::Atom("save_failed"))?;
+    writer::xlsx::write(&spreadsheet, p).map_err(|_| rustler::Error::Term(Box::new("save_failed")))?;
     Ok(atoms::ok())
 }
 
@@ -155,7 +168,8 @@ rustler::init!(
         get_sheet,
         get_sheet_by_name,
         get_cell,
-        get_cell_value,
+        get_cell_value_by_cell,
+        get_cell_value_by_sheet,
         set_cell_value_by_cell,
         set_cell_value_by_sheet,
         save

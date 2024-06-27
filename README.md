@@ -17,7 +17,7 @@ end
 
 ## Usage
 
-Here are some sample `nil` functions API(see `ExcelixirRustler` module), need to update be with more friendly-wrapper API later.
+Here are some sample `NIF` functions API(see `ExcelixirRustler` module), need to update be with more friendly-wrapper API later.
 
 ```elixir
 iex(1)> ref = ExcelixirRustler.read("/path/to/target/file.xlsx")
