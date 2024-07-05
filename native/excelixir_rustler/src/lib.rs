@@ -5,6 +5,7 @@ use umya_spreadsheet::reader;
 use umya_spreadsheet::writer;
 use umya_spreadsheet::reader::xlsx::XlsxError;
 use umya_spreadsheet::structs::Spreadsheet;
+use umya_spreadsheet::helper::coordinate::index_from_coordinate;
 
 #[allow(dead_code)]
 struct SpreadsheetResource(Arc<Mutex<Spreadsheet>>);
@@ -91,11 +92,9 @@ pub fn get_sheet_by_name(spreadsheet: ResourceArc<SpreadsheetResource>, name: St
 
 #[rustler::nif]
 fn get_cell(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifResult<Option<ResourceArc<CellResource>>> {
-    let exists = {
-        let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
-        spreadsheet.get_sheet_by_name(&worksheet.sheet_name).unwrap().get_cell(cell_ref.as_str()).is_some()
-    };
-    if exists {
+    let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
+    let sheet = spreadsheet.get_sheet_by_name(&worksheet.sheet_name).ok_or_else(|| rustler::Error::Term(Box::new("sheet_not_found")))?;
+    if sheet.get_cell(cell_ref.as_str()).is_some() {
         Ok(Some(ResourceArc::new(CellResource {
             spreadsheet: worksheet.spreadsheet.clone(),
             sheet_name: worksheet.sheet_name.clone(),
@@ -109,8 +108,8 @@ fn get_cell(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifR
 #[rustler::nif(name = "get_cell_value")]
 fn get_cell_value_by_cell(cell: ResourceArc<CellResource>) -> NifResult<Option<String>> {
     let spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
-    let sheet = spreadsheet.get_sheet_by_name(&cell.sheet_name).unwrap();
-    let cell = sheet.get_cell(cell.cell_ref.as_str()).unwrap();
+    let sheet = spreadsheet.get_sheet_by_name(&cell.sheet_name).ok_or_else(|| rustler::Error::Term(Box::new("sheet_not_found")))?;
+    let cell = sheet.get_cell(cell.cell_ref.as_str()).ok_or_else(|| rustler::Error::Term(Box::new("cell_not_found")))?;
     let value = cell.get_value().to_string();
     if value.is_empty() {
         Ok(None)
@@ -122,22 +121,27 @@ fn get_cell_value_by_cell(cell: ResourceArc<CellResource>) -> NifResult<Option<S
 #[rustler::nif(name = "get_cell_value")]
 fn get_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: String) -> NifResult<Option<String>> {
     let spreadsheet = worksheet.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
-    let sheet = spreadsheet.get_sheet_by_name(&worksheet.sheet_name).unwrap();
-    let cell = sheet.get_cell(cell_ref.as_str())
-        .ok_or_else(|| rustler::Error::Term(Box::new("cell_not_found")))?;
+    let sheet = spreadsheet.get_sheet_by_name(&worksheet.sheet_name).ok_or_else(|| rustler::Error::Term(Box::new("sheet_not_found")))?;
 
-    let value = cell.get_value().to_string();
-    if value.is_empty() {
-        Ok(None)
+    let (col, row, _, _) = index_from_coordinate(cell_ref.as_str());
+    if col.is_none() || row.is_none() {
+        return Ok(None);
     } else {
-        Ok(Some(value))
+        let cell = sheet.get_cell(cell_ref.as_str())
+            .ok_or_else(|| rustler::Error::Term(Box::new("cell_not_found")))?;
+        let value = cell.get_value().to_string();
+        if value.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(value))
+        }
     }
 }
 
 #[rustler::nif(name = "set_cell_value")]
 fn set_cell_value_by_cell(cell: ResourceArc<CellResource>, value: String) -> NifResult<Atom> {
     let mut spreadsheet = cell.spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
-    let sheet = spreadsheet.get_sheet_by_name_mut(&cell.sheet_name).unwrap();
+    let sheet = spreadsheet.get_sheet_by_name_mut(&cell.sheet_name).ok_or_else(|| rustler::Error::Term(Box::new("sheet_not_found")))?;
     sheet.get_cell_mut(cell.cell_ref.as_str()).set_value(value);
     Ok(atoms::ok())
 }
@@ -146,7 +150,7 @@ fn set_cell_value_by_cell(cell: ResourceArc<CellResource>, value: String) -> Nif
 fn set_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: String, value: String) -> NifResult<Atom> {
     let spreadsheet = worksheet.spreadsheet.clone();
     let mut spreadsheet_lock = spreadsheet.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
-    let sheet = spreadsheet_lock.get_sheet_by_name_mut(&worksheet.sheet_name).unwrap();
+    let sheet = spreadsheet_lock.get_sheet_by_name_mut(&worksheet.sheet_name).ok_or_else(|| rustler::Error::Term(Box::new("sheet_not_found")))?;
     
     // Always write value to the cell even if that cell is not existed.
     sheet.get_cell_mut(cell_ref.as_str()).set_value(&value);
@@ -157,7 +161,7 @@ fn set_cell_value_by_sheet(worksheet: ResourceArc<WorksheetResource>, cell_ref: 
 pub fn save(spreadsheet: ResourceArc<SpreadsheetResource>, path: String) -> NifResult<Atom> {
     let spreadsheet = spreadsheet.0.lock().map_err(|_| rustler::Error::Term(Box::new("lock_failed")))?;
     let p = std::path::Path::new(&path);
-    writer::xlsx::write(&spreadsheet, p).map_err(|_| rustler::Error::Term(Box::new("save_failed")))?;
+    writer::xlsx::write(&spreadsheet, p).map_err(|e| rustler::Error::Term(Box::new(format!("save_failed: {}", e))))?;
     Ok(atoms::ok())
 }
 

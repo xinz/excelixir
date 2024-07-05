@@ -1,4 +1,6 @@
 defmodule ExcelixirRustler do
+  @moduledoc false
+
   use Rustler, otp_app: :excelixir, crate: "excelixir_rustler"
 
   def read(_path), do: :erlang.nif_error(:nif_not_loaded)
