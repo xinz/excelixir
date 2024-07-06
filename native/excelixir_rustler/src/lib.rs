@@ -3,7 +3,7 @@ use rustler::{Atom, Env, NifResult, ResourceArc, Error as RustlerError, Term};
 
 use umya_spreadsheet::reader;
 use umya_spreadsheet::writer;
-use umya_spreadsheet::reader::xlsx::XlsxError;
+use umya_spreadsheet::structs::XlsxError;
 use umya_spreadsheet::structs::Spreadsheet;
 use umya_spreadsheet::helper::coordinate::index_from_coordinate;
 
@@ -42,6 +42,7 @@ fn xlsx_error_to_str(err: XlsxError) -> String {
         XlsxError::Xml(_) => "xml_error".to_string(),
         XlsxError::Zip(_) => "zip_error".to_string(),
         XlsxError::Uft8(_) => "uft8_error".to_string(),
+        XlsxError::CellError(_) => "cell_error".to_string()
     }
 }
 
@@ -51,7 +52,7 @@ pub fn read(path: String) -> NifResult<ResourceArc<SpreadsheetResource>> {
     let p = std::path::Path::new(&path);
     match reader::xlsx::read(p) {
         Ok(spreadsheet) => Ok(ResourceArc::new(SpreadsheetResource(Arc::new(Mutex::new(spreadsheet))))),
-        Err(error) => return Err(RustlerError::Term(Box::new(xlsx_error_to_str(error)))),
+        Err(error) => Err(RustlerError::Term(Box::new(xlsx_error_to_str(error)))),
     }
 }
 
